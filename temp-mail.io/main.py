@@ -18,7 +18,8 @@ headers = {
     'sec-fetch-mode': 'cors',
     'sec-fetch-site': 'same-site',
     'sec-gpc': '1',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
 }
 
 
@@ -39,15 +40,13 @@ def get_email(email_id):
     url = f'https://api.internal.temp-mail.io/api/v3/email/{email_id}/messages'
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        print("Response JSON:", response.json())
-        email_body_text = response.json()[0]['body_text']
+        # print("Response JSON:", response.json())
+        try:
+            email_body_text = response.json()[0]['body_text']
+        except IndexError:
+            return None
         url_pattern = r'https://[^ ]+'
-        url_match = re.search(url_pattern, email_body_text)
-        if url_match:
-            url = url_match.group()
-            return url
-        else:
-            print("No URL found in the email body text.")
+        return re.search(url_pattern, email_body_text)
 
 
 if __name__ == '__main__':
