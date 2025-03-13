@@ -36,7 +36,7 @@ def get_new_email():
         return response_data['email']
 
 
-def get_email(email_id):
+def get_url(email_id):
     url = f'https://api.internal.temp-mail.io/api/v3/email/{email_id}/messages'
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
@@ -50,6 +50,8 @@ def get_email(email_id):
 
 
 if __name__ == '__main__':
-    email = get_new_email()
-    time.sleep(30)
-    url = get_email(email)
+    # email = get_new_email()
+    # print(email)
+    email = "33t3mlzkjy@qacmjeq.com"
+    # time.sleep(30)
+    url = get_url(email)
