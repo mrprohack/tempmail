@@ -50,8 +50,8 @@ def get_url(email_id):
 
 
 if __name__ == '__main__':
-    # email = get_new_email()
-    # print(email)
-    email = "33t3mlzkjy@qacmjeq.com"
-    # time.sleep(30)
+    email = get_new_email()
+    print(email)
+    # email = "33t3mlzkjy@qacmjeq.com"
+    time.sleep(30)
     url = get_url(email)
