@@ -40,7 +40,7 @@ def get_url(email_id):
     url = f'https://api.internal.temp-mail.io/api/v3/email/{email_id}/messages'
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        # print("Response JSON:", response.json())
+        print("Response JSON:", response.json())
         try:
             email_body_text = response.json()[0]['body_text']
         except IndexError:
@@ -53,5 +53,5 @@ if __name__ == '__main__':
     email = get_new_email()
     print(email)
     # email = "33t3mlzkjy@qacmjeq.com"
-    time.sleep(30)
+    input("Press enter to continue")
     url = get_url(email)
