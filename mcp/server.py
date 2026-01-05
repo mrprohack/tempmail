@@ -1,338 +1,298 @@
 """
-TempMail MCP Server - Model Context Protocol server for temporary email services
-
-This server exposes tools for creating and managing temporary email addresses
-across multiple providers: tempmailo.com, mail.tm, temp-mail.io, tempmail.so, tempmail.plus
+TempMail MCP Server - Fast Model Context Protocol server for temp emails
 
 Usage:
-    python mcp/server.py
+    uv run python mcp/server.py
 
-The server provides the following tools:
-- get_temp_email: Create a new temporary email address
-- check_inbox: Check inbox for a given email address
-- read_message: Read a specific message by ID
+Available tools:
+- get_temp_email: Create temp email (tempmailo, mailtm, tempmailplus)
+- check_inbox: Check inbox for email
+- read_message: Read message by ID
 - extract_urls: Extract URLs from email content
 """
 
 import asyncio
 import json
 import logging
+import random
 import re
-import sys
-import time
-from typing import Any, Dict, List, Optional
+import string
+from typing import Any
 
 import requests
-from bs4 import BeautifulSoup
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("tempmail-mcp")
 
 app = Server("tempmail-mcp")
 
-PROVIDERS = {}
+_URL_RE = re.compile(r'https://[^\s<>"]+')
+_EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+
+_SESSION = requests.Session()
+_TIMEOUT = 5
+
+_DOMAINS_CACHE = None
 
 
-class BaseEmailProvider:
-    """Base class for email providers"""
-    
-    def get_new_email(self) -> Dict[str, Any]:
-        raise NotImplementedError
-    
-    def check_inbox(self, email: str) -> Dict[str, Any]:
-        raise NotImplementedError
-    
-    def read_message(self, email: str, message_id: str) -> Dict[str, Any]:
-        raise NotImplementedError
+def random_str(length: int) -> str:
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 
-class TempMailoProvider(BaseEmailProvider):
-    """TempMailo.com provider"""
-    
-    BASE_URL = "https://tempmailo.com"
-    
-    def __init__(self):
-        self.session = requests.Session()
-        self.headers = {
-            'accept': 'application/json, text/plain, */*',
-            'content-type': 'application/json;charset=UTF-8',
-            'origin': self.BASE_URL,
-            'referer': f'{self.BASE_URL}/',
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            'x-requested-with': 'XMLHttpRequest'
-        }
-    
-    def get_new_email(self) -> Dict[str, Any]:
-        try:
-            url = f"{self.BASE_URL}/changemail"
-            params = {'_r': str(time.time()).replace('.', '')[:16]}
-            response = self.session.get(url, headers=self.headers, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return {"email": f"test{self._random_str(8)}@{self._random_str(8)}.com"}
-        except Exception as e:
-            logger.error(f"TempMailo get_new_email failed: {e}")
-            return {"email": f"test{self._random_str(8)}@tempmailo.com"}
-    
-    def check_inbox(self, email: str) -> Dict[str, Any]:
-        try:
-            url = f"{self.BASE_URL}/"
-            response = self.session.post(url, headers=self.headers, json={"mail": email}, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            logger.error(f"TempMailo check_inbox failed: {e}")
-            return []
-    
-    def read_message(self, email: str, message_id: str) -> Dict[str, Any]:
-        try:
-            inbox = self.check_inbox(email)
-            messages = inbox if isinstance(inbox, list) else inbox.get("data", [])
-            for msg in messages:
-                if str(msg.get("id", msg.get("id", ""))) == str(message_id):
-                    return msg
-            return {}
-        except Exception as e:
-            logger.error(f"TempMailo read_message failed: {e}")
-            return {}
-    
-    def _random_str(self, length: int) -> str:
-        import random
-        import string
-        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
-
-class MailTMProvider(BaseEmailProvider):
-    """Mail.tm provider"""
-    
-    BASE_URL = "https://api.mail.tm"
-    
-    def __init__(self):
-        self.headers = {
-            'accept': 'application/json',
-            'content-type': 'application/json',
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-        }
-        self._domains_cache = None
-    
-    def get_new_email(self) -> Dict[str, Any]:
-        try:
-            domain = self._get_domain()
-            name = self._random_str(10)
-            email = f"{name}@{domain}"
-            return {"email": email, "domain": domain}
-        except Exception as e:
-            logger.error(f"MailTM get_new_email failed: {e}")
-            return {"email": f"test{self._random_str(8)}@mail.tm"}
-    
-    def check_inbox(self, email: str) -> Dict[str, Any]:
-        try:
-            token = self._get_token(email, "password123")
-            if token:
-                headers = {**self.headers, 'authorization': f'Bearer {token}'}
-                response = requests.get(f"{self.BASE_URL}/messages", headers=headers, timeout=10)
-                if response.status_code == 200:
-                    return response.json()
-            return {"hydra:member": []}
-        except Exception as e:
-            logger.error(f"MailTM check_inbox failed: {e}")
-            return {"hydra:member": []}
-    
-    def read_message(self, email: str, message_id: str) -> Dict[str, Any]:
-        try:
-            token = self._get_token(email, "password123")
-            if token:
-                headers = {**self.headers, 'authorization': f'Bearer {token}'}
-                response = requests.get(f"{self.BASE_URL}/messages/{message_id}", headers=headers, timeout=10)
-                if response.status_code == 200:
-                    return response.json()
-            return {}
-        except Exception as e:
-            logger.error(f"MailTM read_message failed: {e}")
-            return {}
-    
-    def _get_domain(self) -> str:
-        if self._domains_cache:
-            return self._domains_cache
-        try:
-            response = requests.get(f"{self.BASE_URL}/domains", headers=self.headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'hydra:member' in data and data['hydra:member']:
-                    self._domains_cache = data['hydra:member'][0]['domain']
-                    return self._domains_cache
-        except Exception as e:
-            logger.error(f"Failed to get domain: {e}")
-        return "mail.tm"
-    
-    def _get_token(self, email: str, password: str) -> Optional[str]:
-        try:
-            response = requests.post(f"{self.BASE_URL}/token", headers=self.headers, json={
-                'address': email, 'password': password
-            }, timeout=10)
-            if response.status_code == 200:
-                return response.json().get('token')
-        except Exception as e:
-            logger.error(f"Failed to get token: {e}")
-        return None
-    
-    def _random_str(self, length: int) -> str:
-        import random
-        import string
-        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
-
-class TempMailPlusProvider(BaseEmailProvider):
-    """TempMail.plus provider"""
-    
-    BASE_URL = "https://tempmail.plus/api/mails"
-    DOMAINS = ['mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua', 
-               'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com']
-    
-    def __init__(self):
-        self.headers = {
-            'accept': 'application/json, text/javascript, */*; q=0.01',
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            'x-requested-with': 'XMLHttpRequest'
-        }
-        import random
-        self._random = random
-    
-    def get_new_email(self) -> Dict[str, Any]:
-        name = ''.join(self._random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=10))
-        domain = self._random.choice(self.DOMAINS)
-        return {"email": f"{name}@{domain}"}
-    
-    def check_inbox(self, email: str) -> Dict[str, Any]:
-        if not self._validate_email(email):
-            return {}
-        try:
-            params = {"email": email, "limit": 20, "epin": ""}
-            response = requests.get(self.BASE_URL, headers=self.headers, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return {}
-        except Exception as e:
-            logger.error(f"TempMailPlus check_inbox failed: {e}")
-            return {}
-    
-    def read_message(self, email: str, message_id: str) -> Dict[str, Any]:
-        try:
-            url = f"{self.BASE_URL}/{message_id}"
-            params = {"email": email, "epin": ""}
-            response = requests.get(url, headers=self.headers, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return {}
-        except Exception as e:
-            logger.error(f"TempMailPlus read_message failed: {e}")
-            return {}
-    
-    def _validate_email(self, email: str) -> bool:
-        return bool(re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email))
-
-
-PROVIDERS = {
-    "tempmailo": TempMailoProvider(),
-    "mailtm": MailTMProvider(),
-    "tempmailplus": TempMailPlusProvider(),
-}
-
-
-def extract_urls_from_content(content: str) -> List[str]:
-    """Extract URLs from email content"""
+def extract_urls(content: str) -> list:
     if not content:
         return []
     urls = set()
-    found = re.findall(r'https://[^\s<>"]+', content)
-    for url in found:
+    for url in _URL_RE.findall(content):
         url = re.sub(r'[.,;!?]$', '', url)
         if url.startswith('http'):
             urls.add(url)
     return list(urls)
 
 
+def get_temp_email(provider: str = "tempmailo") -> dict:
+    if provider == "mailtm":
+        return _mailtm_get_email()
+    if provider == "tempmailplus":
+        return _tempmailplus_get_email()
+    return _tempmailo_get_email()
+
+
+def check_inbox(email: str, provider: str = "tempmailo") -> dict:
+    if provider == "mailtm":
+        return _mailtm_check_inbox(email)
+    if provider == "tempmailplus":
+        return _tempmailplus_check_inbox(email)
+    return _tempmailo_check_inbox(email)
+
+
+def read_message(email: str, message_id: str, provider: str = "tempmailo") -> dict:
+    if provider == "mailtm":
+        return _mailtm_read_message(email, message_id)
+    if provider == "tempmailplus":
+        return _tempmailplus_read_message(email, message_id)
+    return _tempmailo_read_message(email, message_id)
+
+
+# TempMailo provider
+def _tempmailo_get_email() -> dict:
+    try:
+        resp = _SESSION.get(
+            "https://tempmailo.com/changemail",
+            params={'_r': str(int(__import__('time').time() * 1000))},
+            headers={
+                'accept': 'application/json, text/plain, */*',
+                'content-type': 'application/json',
+                'origin': 'https://tempmailo.com',
+                'referer': 'https://tempmailo.com/',
+                'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+            },
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"tempmailo: {e}")
+    return {"email": f"test{random_str(8)}@tempmailo.com"}
+
+
+def _tempmailo_check_inbox(email: str) -> dict:
+    try:
+        resp = _SESSION.post(
+            "https://tempmailo.com/",
+            json={"mail": email},
+            headers={
+                'accept': 'application/json',
+                'content-type': 'application/json',
+                'user-agent': 'Mozilla/5.0',
+            },
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"tempmailo inbox: {e}")
+    return []
+
+
+def _tempmailo_read_message(email: str, message_id: str) -> dict:
+    try:
+        inbox = _tempmailo_check_inbox(email)
+        messages = inbox if isinstance(inbox, list) else inbox.get("data", [])
+        for msg in messages:
+            if str(msg.get("id")) == str(message_id):
+                return msg
+    except Exception as e:
+        logger.error(f"tempmailo read: {e}")
+    return {}
+
+
+# Mail.tm provider
+def _mailtm_get_domain() -> str:
+    global _DOMAINS_CACHE
+    if _DOMAINS_CACHE:
+        return _DOMAINS_CACHE
+    try:
+        resp = _SESSION.get(
+            "https://api.mail.tm/domains",
+            headers={'accept': 'application/json'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('hydra:member'):
+                _DOMAINS_CACHE = data['hydra:member'][0]['domain']
+                return _DOMAINS_CACHE
+    except Exception as e:
+        logger.error(f"mailtm domain: {e}")
+    return "mail.tm"
+
+
+def _mailtm_get_token(email: str) -> str:
+    try:
+        resp = _SESSION.post(
+            "https://api.mail.tm/token",
+            json={"address": email, "password": "password123"},
+            headers={'accept': 'application/json', 'content-type': 'application/json'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json().get('token', '')
+    except Exception as e:
+        logger.error(f"mailtm token: {e}")
+    return ''
+
+
+def _mailtm_get_email() -> dict:
+    domain = _mailtm_get_domain()
+    email = f"{random_str(10)}@{domain}"
+    return {"email": email, "domain": domain}
+
+
+def _mailtm_check_inbox(email: str) -> dict:
+    token = _mailtm_get_token(email)
+    if not token:
+        return {"hydra:member": []}
+    try:
+        resp = _SESSION.get(
+            "https://api.mail.tm/messages",
+            headers={'accept': 'application/json', 'authorization': f'Bearer {token}'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"mailtm inbox: {e}")
+    return {"hydra:member": []}
+
+
+def _mailtm_read_message(email: str, message_id: str) -> dict:
+    token = _mailtm_get_token(email)
+    if not token:
+        return {}
+    try:
+        resp = _SESSION.get(
+            f"https://api.mail.tm/messages/{message_id}",
+            headers={'accept': 'application/json', 'authorization': f'Bearer {token}'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"mailtm read: {e}")
+    return {}
+
+
+# TempMailPlus provider
+_TEMPMAILPLUS_DOMAINS = [
+    'mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua',
+    'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com'
+]
+
+
+def _tempmailplus_get_email() -> dict:
+    name = random_str(10)
+    domain = random.choice(_TEMPMAILPLUS_DOMAINS)
+    return {"email": f"{name}@{domain}"}
+
+
+def _tempmailplus_check_inbox(email: str) -> dict:
+    if not _EMAIL_RE.match(email):
+        return {}
+    try:
+        resp = _SESSION.get(
+            "https://tempmail.plus/api/mails",
+            params={"email": email, "limit": 20},
+            headers={'accept': 'application/json', 'user-agent': 'Mozilla/5.0'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"tempmailplus inbox: {e}")
+    return {}
+
+
+def _tempmailplus_read_message(email: str, message_id: str) -> dict:
+    try:
+        resp = _SESSION.get(
+            f"https://tempmail.plus/api/mails/{message_id}",
+            params={"email": email},
+            headers={'accept': 'application/json', 'user-agent': 'Mozilla/5.0'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"tempmailplus read: {e}")
+    return {}
+
+
 @app.list_tools()
-async def list_tools() -> List[Tool]:
-    """Return list of available tools"""
+async def list_tools() -> list:
     return [
         Tool(
             name="get_temp_email",
-            description="Create a new temporary email address. Specify provider: tempmailo, mailtm, or tempmailplus",
+            description="Create temp email (tempmailo, mailtm, tempmailplus)",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "provider": {
-                        "type": "string",
-                        "enum": ["tempmailo", "mailtm", "tempmailplus"],
-                        "default": "tempmailo",
-                        "description": "Email provider to use"
-                    }
-                }
+                "properties": {"provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}}
             }
         ),
         Tool(
             name="check_inbox",
-            description="Check inbox for a given email address and provider",
+            description="Check inbox for email",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "email": {
-                        "type": "string",
-                        "description": "Email address to check"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "enum": ["tempmailo", "mailtm", "tempmailplus"],
-                        "default": "tempmailo",
-                        "description": "Email provider"
-                    }
+                    "email": {"type": "string"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}
                 },
                 "required": ["email"]
             }
         ),
         Tool(
             name="read_message",
-            description="Read a specific message by ID from an email inbox",
+            description="Read message by ID",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "email": {
-                        "type": "string",
-                        "description": "Email address"
-                    },
-                    "message_id": {
-                        "type": "string",
-                        "description": "Message ID to read"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "enum": ["tempmailo", "mailtm", "tempmailplus"],
-                        "default": "tempmailo",
-                        "description": "Email provider"
-                    }
+                    "email": {"type": "string"},
+                    "message_id": {"type": "string"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}
                 },
                 "required": ["email", "message_id"]
             }
         ),
         Tool(
             name="extract_urls",
-            description="Extract URLs from email content (html or text)",
+            description="Extract URLs from email content",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "Email content to extract URLs from"
-                    }
-                },
+                "properties": {"content": {"type": "string"}},
                 "required": ["content"]
             }
         ),
@@ -340,51 +300,30 @@ async def list_tools() -> List[Tool]:
 
 
 @app.call_tool()
-async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-    """Handle tool calls"""
+async def call_tool(name: str, args: dict) -> list:
     try:
+        email = args.get("email", "") or ""
+        message_id = args.get("message_id", "") or ""
+        
         if name == "get_temp_email":
-            provider_name = arguments.get("provider", "tempmailo")
-            provider = PROVIDERS.get(provider_name, PROVIDERS["tempmailo"])
-            result = provider.get_new_email()
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+            result = get_temp_email(args.get("provider", "tempmailo"))
         elif name == "check_inbox":
-            email = arguments.get("email")
-            provider_name = arguments.get("provider", "tempmailo")
-            provider = PROVIDERS.get(provider_name, PROVIDERS["tempmailo"])
-            result = provider.check_inbox(email)
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+            result = check_inbox(email, args.get("provider", "tempmailo"))
         elif name == "read_message":
-            email = arguments.get("email")
-            message_id = arguments.get("message_id")
-            provider_name = arguments.get("provider", "tempmailo")
-            provider = PROVIDERS.get(provider_name, PROVIDERS["tempmailo"])
-            result = provider.read_message(email, message_id)
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+            result = read_message(email, message_id, args.get("provider", "tempmailo"))
         elif name == "extract_urls":
-            content = arguments.get("content", "")
-            urls = extract_urls_from_content(content)
-            return [TextContent(type="text", text=json.dumps(urls, indent=2))]
-        
+            result = extract_urls(args.get("content", ""))
         else:
-            raise ValueError(f"Unknown tool: {name}")
-    
+            return [TextContent(type="text", text=json.dumps({"error": f"Unknown: {name}"}))]
+        return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
-        logger.error(f"Tool {name} failed: {e}")
-        error_result = {"error": str(e)}
-        return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
 async def main():
-    """Main entry point"""
     logger.info("Starting TempMail MCP Server...")
-    logger.info(f"Available providers: {list(PROVIDERS.keys())}")
-    
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+    async with stdio_server() as (r, w):
+        await app.run(r, w, app.create_initialization_options())
 
 
 if __name__ == "__main__":

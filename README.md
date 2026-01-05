@@ -11,8 +11,52 @@ Python utilities for working with temporary email services. Supports multiple pr
 | Temp-Mail.io | temp-mail.io | ✅ Working |
 | TempMail.so | tempmail.so | ✅ Working |
 | TempMail.plus | tempmail.plus | ✅ Working |
+| MCP Server | tempmail-mcp | ✅ Fast |
 
-## Installation
+## Quick Start with uv (Recommended)
+
+```bash
+# Install uv (if not installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Run any service
+uv run python tempmailo.com/main.py
+uv run python mail.tm/main.py
+uv run python tempmail.plus/main.py
+```
+
+## MCP Server (Model Context Protocol)
+
+Fast MCP server for AI assistants to use temp email services.
+
+### Install & Run
+
+```bash
+cd mcp
+uv sync                    # Install dependencies
+uv run python server.py    # Start MCP server (stdio)
+```
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_temp_email` | Create temp email (tempmailo, mailtm, tempmailplus) |
+| `check_inbox` | Check inbox for email |
+| `read_message` | Read message by ID |
+| `extract_urls` | Extract URLs from email content |
+
+### Example MCP Usage
+
+```json
+{
+  "tool": "get_temp_email",
+  "arguments": {"provider": "tempmailo"}
+}
+// Returns: {"email": "test123@tempmailo.com"}
+```
+
+## Installation (pip)
 
 ```bash
 pip install -r tempmailo.com/requirements.txt
@@ -24,8 +68,6 @@ Required packages:
 - `beautifulsoup4`
 
 ## Usage
-
-Run any service directly:
 
 ```bash
 python tempmailo.com/main.py
@@ -44,7 +86,6 @@ Messages: []
 
 # mail.tm  
 Email: abc123@mail.tm
-Token: eyJ0eXAiOiJKV1Qi...
 Inbox: {'hydra:member': [...]}
 
 # tempmail.plus
@@ -55,36 +96,39 @@ Inbox: {'result': True, 'mail_list': [...]}
 ## Running Tests
 
 ```bash
-cd tempmailo.com
-python -m pytest cookie_test/              # All tests
-python -m pytest cookie_test/test1.py      # Specific file
-python -m pytest cookie_test/test1.py::TestRandomStr  # Test class
-python -m pytest cookie_test/test1.py::TestRandomStr::test_random_str_length  # Single test
+# Main services
+cd tempmailo.com && python -m pytest cookie_test/ -v
+
+# MCP server
+cd mcp && uv run pytest test_server.py -v
 ```
 
-**Test Results:** 13/13 passing
+**Test Results:** 13/13 passing (main) + 12/12 (MCP)
 
 ## Project Structure
 
 ```
 tempmail/
-├── AGENTS.md              # Guidelines for AI agents
 ├── README.md              # This file
+├── AGENTS.md              # Guidelines for AI agents
 ├── .gitignore             # Git ignore rules
 ├── tempmailo.com/
 │   ├── main.py           # TempMailo service
 │   ├── requirements.txt  # Dependencies
 │   └── cookie_test/
-│       ├── test1.py      # Email validation tests
-│       └── test2.py      # API tests
+│       └── tests.py      # Unit tests
 ├── mail.tm/
 │   └── main.py           # Mail.tm service
 ├── temp-mail.io/
 │   └── main.py           # Temp-Mail.io service
 ├── tempmail.so/
 │   └── main.py           # TempMail.so service
-└── tempmail.plus/
-    └── main.py           # TempMail.plus service
+├── tempmail.plus/
+│   └── main.py           # TempMail.plus service
+└── mcp/
+    ├── pyproject.toml    # uv project config
+    ├── server.py         # MCP server
+    └── test_server.py    # MCP tests
 ```
 
 ## Features
@@ -93,6 +137,8 @@ tempmail/
 - Check inbox for received emails
 - Extract URLs from email content
 - Simple CLI interface (no user input required)
+- MCP server for AI assistant integration
+- Fast with shared HTTP session and caching
 - Consistent API across all providers
 
 ## License
