@@ -4,24 +4,51 @@
 
 ### Installing Dependencies
 ```bash
+# Main services
 pip install -r tempmailo.com/requirements.txt
+
+# MCP server (uses uv)
+cd mcp && uv sync
+
+# Groq integration
+cd mcp && cp .env.example .env
+# Then edit .env and add GROQ_API_KEY
 ```
 
 ### Running the Application
 ```bash
+# Main services
 python tempmailo.com/main.py
 python mail.tm/main.py
 python temp-mail.io/main.py
 python tempmail.so/main.py
 python tempmail.plus/main.py
+
+# MCP server (stdio transport)
+cd mcp && uv run python server.py
 ```
 
 ### Running Tests
 ```bash
-cd tempmailo.com && python -m pytest cookie_test/              # Run all tests
-cd tempmailo.com && python -m pytest cookie_test/test1.py      # Run specific test file
-cd tempmailo.com && python -m pytest cookie_test/test1.py::TestRandomStr  # Run test class
-cd tempmailo.com && python -m pytest cookie_test/test1.py::TestRandomStr::test_random_str_length  # Run single test
+# Main services tests
+cd tempmailo.com && python -m pytest cookie_test/              # All tests
+cd tempmailo.com && python -m pytest cookie_test/test1.py      # Specific file
+cd tempmailo.com && python -m pytest cookie_test/test1.py::TestRandomStr  # Test class
+cd tempmailo.com && python -m pytest cookie_test/test1.py::TestRandomStr::test_random_str_length  # Single test
+
+# MCP server tests
+cd mcp && uv run pytest test_server.py -v                      # All MCP tests
+cd mcp && uv run pytest test_server.py::TestExtractUrls -v     # Specific class
+
+# Groq + MCP integration tests
+cd mcp && export GROQ_API_KEY=your_key && uv run python test_groq_mcp.py
+
+# Run single Groq test function
+cd mcp && uv run python -c "
+import asyncio
+from test_groq_mcp import test_groq_api
+asyncio.run(test_groq_api())
+"
 ```
 
 ### Linting
@@ -41,16 +68,17 @@ black .          # Auto-format files
 - Use absolute imports
 - Keep imports sorted alphabetically within each group
 ```python
+import asyncio
 import json
 import logging
 import re
 import time
+from typing import Any, Dict, List, Optional
 
-import browsercookie
 import requests
-from bs4 import BeautifulSoup
-
-from .utils import helper_function
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
 ```
 
 ### Formatting
@@ -64,7 +92,7 @@ from .utils import helper_function
 - Use type hints for function signatures
 - Prefer explicit types over `Any`
 ```python
-def get_new_email(self) -> Optional[Dict[str, Any]]:
+def get_new_email(self) -> Dict[str, Any]:
     ...
 
 def validate_email(email: str) -> bool:
@@ -82,7 +110,7 @@ def validate_email(email: str) -> bool:
 ### Error Handling
 - Use `try/except` blocks with specific exception types
 - Always log errors with appropriate level
-- Return `None` or empty dict/list on failure, don't raise for expected cases
+- Return `None`, `{}`, or `[]` on failure, don't raise for expected cases
 - Use `response.raise_for_status()` for HTTP requests
 ```python
 try:
@@ -91,7 +119,7 @@ try:
     return response.json()
 except requests.exceptions.RequestException as e:
     logger.error(f"Failed to get email: {e}")
-    return None
+    return {}
 ```
 
 ### Class Structure
@@ -106,27 +134,58 @@ except requests.exceptions.RequestException as e:
 - Use appropriate log levels: `DEBUG` for dev, `INFO` for runtime, `WARNING`/`ERROR` for issues
 
 ### HTTP Requests
-- Use `requests.Session()` for persistent connections
-- Define headers as class or module constants when reused
+- Use `requests.Session()` for persistent connections across requests
+- Define headers as module constants when reused
 - Use `json=` parameter for JSON bodies, `data=` for form data
 - Always check `response.status_code` or use `raise_for_status()`
+- Set reasonable timeouts (5-10 seconds)
 
 ### Security
 - Never commit API keys, tokens, or cookies to version control
 - Use environment variables for sensitive data
 - Validate all inputs before use
+- Create `.env.example` template for required env vars
 
 ### Documentation
 - Write docstrings for public classes and methods
 - Use triple quotes for docstrings
 - Keep docstrings concise but informative
 ```python
-def get_new_email(self) -> Optional[str]:
+def get_new_email(self) -> Dict[str, Any]:
     """Get a new temporary email address from the service."""
 ```
 
 ### Project Structure
-- Each temp mail service gets its own directory
-- Shared utilities go in a `utils/` directory
-- Tests go in `cookie_test/` subdirectory
-- `requirements.txt` per service or root-level for shared dependencies
+```
+tempmail/
+├── README.md              # Project documentation
+├── AGENTS.md              # This file
+├── .gitignore             # Git ignore rules
+├── tempmailo.com/         # TempMailo service
+│   ├── main.py
+│   ├── requirements.txt
+│   └── cookie_test/       # Unit tests
+├── mail.tm/               # Mail.tm service
+│   └── main.py
+├── temp-mail.io/          # Temp-Mail.io service
+│   └── main.py
+├── tempmail.so/           # TempMail.so service
+│   └── main.py
+├── tempmail.plus/         # TempMail.plus service
+│   └── main.py
+└── mcp/                   # MCP Server
+    ├── pyproject.toml     # uv project config
+    ├── server.py          # MCP server (stdio transport)
+    ├── test_server.py     # MCP unit tests
+    ├── test_groq_mcp.py   # Groq + LangChain integration tests
+    ├── .env.example       # Environment template
+    └── .venv/             # Virtual environment
+```
+
+### MCP Server Guidelines
+- MCP server uses `mcp.server.Server` from official SDK
+- Tools registered with `@app.list_tools()` decorator
+- Tool handlers registered with `@app.call_tool()` decorator
+- Use `stdio_server()` for local subprocess communication
+- Return `List[TextContent]` from tool handlers
+- Log at INFO level for requests, ERROR for failures
