@@ -1,60 +1,55 @@
 import requests
 import time
 import re
+import logging
 
-headers = {
-    'authority': 'api.internal.temp-mail.io',
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://api.internal.temp-mail.io"
+HEADERS = {
     'accept': 'application/json, text/plain, */*',
-    'accept-language': 'en-US,en;q=0.6',
-    'application-name': 'web',
-    'application-version': '2.2.29',
     'content-type': 'application/json;charset=UTF-8',
     'origin': 'https://temp-mail.io',
     'referer': 'https://temp-mail.io/',
-    'sec-ch-ua': '"Chromium";v="116", "Not)A;Brand";v="24", "Brave";v="116"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': 'Windows',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-site',
-    'sec-gpc': '1',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
 
-
 def get_new_email():
-    url = 'https://api.internal.temp-mail.io/api/v3/email/new'
+    try:
+        resp = requests.post(f"{BASE_URL}/api/v3/email/new", headers=HEADERS, json={
+            "min_name_length": 10, "max_name_length": 10
+        }, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()['email']
+    except Exception as e:
+        logger.error(f"Failed to get email: {e}")
+    return None
 
-    data = {
-        "min_name_length": 10,
-        "max_name_length": 10
-    }
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 200:  # If the request is successful
-        response_data = response.json()
-        return response_data['email']
+def get_messages(email_id):
+    try:
+        resp = requests.get(f"{BASE_URL}/api/v3/email/{email_id}/messages", headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Failed to get messages: {e}")
+    return []
 
+def extract_url(email_id):
+    messages = get_messages(email_id)
+    for msg in messages:
+        body = msg.get('body_text', '')
+        match = re.search(r'https://[^\s<>"]+', body)
+        if match:
+            return match.group(0)
+    return None
 
-def get_url(email_id):
-    url = f'https://api.internal.temp-mail.io/api/v3/email/{email_id}/messages'
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        print("Response JSON:", response.json())
-        try:
-            email_body_text = response.json()[0]['body_text']
-        except IndexError:
-            return None
-        url_pattern = r'https://[^ ]+'
-        return re.search(url_pattern, email_body_text)
+def main():
+    email = get_new_email()
+    print(f"Email: {email}")
+    if email:
+        url = extract_url(email)
+        print(f"URL found: {url}")
 
-
-if __name__ == '__main__':
-    # email = get_new_email()
-    # print(email)
-    email = "qclkp2rf6f@ibolinva.com"
-    # email = "vjqeue1i8f@wyoxafp.com"
-    input("Press enter to continue")
-    url = get_url(email)
-    input("Press enter to continue")
-    url = get_url(email)
+if __name__ == "__main__":
+    main()

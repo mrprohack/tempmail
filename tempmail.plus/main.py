@@ -1,98 +1,74 @@
 import requests
 import random
+import string
 import re
+import logging
 
-def creat_random_email():
-    random_string = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=10))
-    domains = ['mailto.plus','fexpost.com','fexbox.org','mailbox.in.ua','rover.info','chitthi.in','fextemp.com','any.pink','merepost.com']
-    email = f'{random_string}@{random.choice(domains)}'
-    return email
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://tempmail.plus/api/mails"
+DOMAINS = ['mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua', 'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com']
+HEADERS = {
+    'accept': 'application/json, text/javascript, */*; q=0.01',
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+    'x-requested-with': 'XMLHttpRequest'
+}
+
+def random_email():
+    name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+    return f"{name}@{random.choice(DOMAINS)}"
+
+def validate_email(email):
+    return bool(re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email))
 
 def get_inbox(email):
-    url = 'https://tempmail.plus/api/mails'
-    params = {
-        'email': email,
-        'limit': 20,
-        'epin': ''
-    }
-    headers = {
-        'sec-ch-ua-platform': 'Linux',
-        'Referer': 'https://tempmail.plus/en/',
-        'X-Requested-With': 'XMLHttpRequest',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'sec-ch-ua': '"Brave";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-        'sec-ch-ua-mobile': '?0'
-    }
-
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code == 200:
-        # print(response.json())
-        email_id = response.json()['first_id']
-        return email_id
-    else:
-        print(f"Error: {response.status_code}")
+    if not validate_email(email):
+        return None
+    params = {"email": email, "limit": 20, "epin": ""}
+    try:
+        resp = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Failed to get inbox: {e}")
+    return None
 
 def read_email(email_id, email):
-    url = f'https://tempmail.plus/api/mails/{email_id}'
-    params = {
-        'email': email,
-        'epin': ''
-    }
-    headers = {
-        'accept': 'application/json, text/javascript, */*; q=0.01',
-        'accept-language': 'en-US,en;q=0.5',
-        'cookie': f'email={email}',
-        'priority': 'u=1, i',
-        'referer': 'https://tempmail.plus/en/',
-        'sec-ch-ua': '"Brave";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': 'Linux',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'sec-gpc': '1',
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-        'x-requested-with': 'XMLHttpRequest'
-    }
-
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Error: {response.status_code}")
+    if not email_id:
         return None
+    url = f"{BASE_URL}/{email_id}"
+    params = {"email": email, "epin": ""}
+    try:
+        resp = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Failed to read email: {e}")
+    return None
 
-def return_url(data):
-    urls = set()  # Use a set to avoid duplicate URLs
+def extract_urls(data):
+    if not data:
+        return []
+    urls = set()
+    for key in ['html', 'text']:
+        content = data.get(key, '')
+        found = re.findall(r'https://[^\s<>"]+', content)
+        for url in found:
+            url = re.sub(r'[.,;!?]$', '', url)
+            if url.startswith('http'):
+                urls.add(url)
+    return list(urls)
 
-    # Extract URLs from the 'html' field
-    html_content = data.get('html', '')
-    urls.update(re.findall(r'https?://[^\s]+', html_content))
-
-    # Extract URLs from the 'text' field
-    text_content = data.get('text', '')
-    urls.update(re.findall(r'https?://[^\s]+', text_content))
-
-    # Print the extracted URLs
-    for url in urls:
-        print(url)
+def main():
+    email = random_email()
+    print(f"Email: {email}")
+    inbox = get_inbox(email)
+    print(f"Inbox: {inbox}")
+    if inbox and inbox.get('first_id'):
+        msg = read_email(inbox['first_id'], email)
+        urls = extract_urls(msg)
+        print(f"URLs: {urls}")
 
 if __name__ == "__main__":
-    check = input("Do you want to create a new email? (y/n): ")
-    if check == "y":
-        email = creat_random_email()
-        print(email)
-        input("Press Enter to read the inbox")
-        email_id = get_inbox(email)
-        data = read_email(email_id, email)
-        if data:
-            return_url(data)
-    else:
-        email = input("Enter your email: ")
-        email_id = get_inbox(email)
-        data = read_email(email_id, email)
-        if data:
-            return_url(data)
+    main()
