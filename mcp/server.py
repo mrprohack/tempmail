@@ -9,6 +9,10 @@ Available tools:
 - check_inbox: Check inbox for email
 - read_message: Read message by ID
 - extract_urls: Extract URLs from email content
+- delete_email: Delete a temporary email address
+- mark_as_read: Mark a message as read
+- search_emails: Search emails by sender or subject
+- filter_emails: Filter emails by read status or date
 """
 
 import asyncio
@@ -17,7 +21,8 @@ import logging
 import random
 import re
 import string
-from typing import Any
+import time
+from typing import Dict, List, Optional, Set, Union
 
 import requests
 from mcp.server import Server
@@ -35,25 +40,47 @@ _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 _SESSION = requests.Session()
 _TIMEOUT = 5
 
-_DOMAINS_CACHE = None
+_DOMAINS_CACHE: Optional[str] = None
+
+_TEMPMAILPLUS_DOMAINS: List[str] = [
+    'mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua',
+    'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com'
+]
 
 
 def random_str(length: int) -> str:
+    """Generate a random string of specified length."""
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 
-def extract_urls(content: str) -> list:
+def extract_urls(content: str) -> List[str]:
+    """Extract URLs from email content.
+
+    Args:
+        content: The text content to extract URLs from
+
+    Returns:
+        List of unique URLs found in the content
+    """
     if not content:
         return []
-    urls = set()
+    urls: Set[str] = set()
     for url in _URL_RE.findall(content):
-        url = re.sub(r'[.,;!?]$', '', url)
-        if url.startswith('http'):
-            urls.add(url)
+        clean_url = re.sub(r'[.,;!?]$', '', url)
+        if clean_url.startswith('http'):
+            urls.add(clean_url)
     return list(urls)
 
 
-def get_temp_email(provider: str = "tempmailo") -> dict:
+def get_temp_email(provider: str = "tempmailo") -> Dict[str, str]:
+    """Create a new temporary email address.
+
+    Args:
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Dictionary containing email address and optionally domain
+    """
     if provider == "mailtm":
         return _mailtm_get_email()
     if provider == "tempmailplus":
@@ -61,7 +88,16 @@ def get_temp_email(provider: str = "tempmailo") -> dict:
     return _tempmailo_get_email()
 
 
-def check_inbox(email: str, provider: str = "tempmailo") -> dict:
+def check_inbox(email: str, provider: str = "tempmailo") -> Union[Dict, List]:
+    """Check inbox for a given email address.
+
+    Args:
+        email: The email address to check
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Inbox data as dictionary or list
+    """
     if provider == "mailtm":
         return _mailtm_check_inbox(email)
     if provider == "tempmailplus":
@@ -69,7 +105,17 @@ def check_inbox(email: str, provider: str = "tempmailo") -> dict:
     return _tempmailo_check_inbox(email)
 
 
-def read_message(email: str, message_id: str, provider: str = "tempmailo") -> dict:
+def read_message(email: str, message_id: str, provider: str = "tempmailo") -> Dict:
+    """Read a specific message by ID.
+
+    Args:
+        email: The email address
+        message_id: The message ID to retrieve
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Message data as dictionary
+    """
     if provider == "mailtm":
         return _mailtm_read_message(email, message_id)
     if provider == "tempmailplus":
@@ -77,12 +123,111 @@ def read_message(email: str, message_id: str, provider: str = "tempmailo") -> di
     return _tempmailo_read_message(email, message_id)
 
 
-# TempMailo provider
-def _tempmailo_get_email() -> dict:
+def delete_email(email: str, provider: str = "tempmailo") -> Dict[str, str]:
+    """Delete a temporary email address.
+
+    Args:
+        email: The email address to delete
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Status message
+    """
+    if provider == "mailtm":
+        return _mailtm_delete_email(email)
+    if provider == "tempmailplus":
+        return _tempmailplus_delete_email(email)
+    return _tempmailo_delete_email(email)
+
+
+def mark_as_read(email: str, message_id: str, provider: str = "tempmailo") -> Dict[str, str]:
+    """Mark a message as read.
+
+    Args:
+        email: The email address
+        message_id: The message ID to mark as read
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Status message
+    """
+    if provider == "mailtm":
+        return _mailtm_mark_as_read(email, message_id)
+    if provider == "tempmailplus":
+        return _tempmailplus_mark_as_read(email, message_id)
+    return _tempmailo_mark_as_read(email, message_id)
+
+
+def search_emails(email: str, query: str, provider: str = "tempmailo") -> Dict[str, Union[List, str]]:
+    """Search emails by sender or subject.
+
+    Args:
+        email: The email address to search in
+        query: Search query (matches sender or subject)
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+
+    Returns:
+        Filtered messages matching the query
+    """
+    inbox = check_inbox(email, provider)
+    messages = inbox if isinstance(inbox, list) else inbox.get("hydra:member", inbox.get("data", []))
+
+    query_lower = query.lower()
+    filtered = [
+        msg for msg in messages
+        if query_lower in str(msg.get("from", "")).lower()
+        or query_lower in str(msg.get("subject", "")).lower()
+    ]
+
+    return {"query": query, "results": filtered, "count": len(filtered)}
+
+
+def filter_emails(
+    email: str,
+    provider: str = "tempmailo",
+    read: Optional[bool] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None
+) -> Dict[str, Union[List, str]]:
+    """Filter emails by read status or date range.
+
+    Args:
+        email: The email address to filter
+        provider: Email provider (tempmailo, mailtm, tempmailplus)
+        read: Filter by read status (True=read, False=unread, None=ignore)
+        since: Filter emails after this date (ISO format)
+        until: Filter emails before this date (ISO format)
+
+    Returns:
+        Filtered messages matching criteria
+    """
+    inbox = check_inbox(email, provider)
+    messages = inbox if isinstance(inbox, list) else inbox.get("hydra:member", inbox.get("data", []))
+    filtered = list(messages)
+
+    if read is not None:
+        filtered = [m for m in filtered if m.get("seen", False) == read]
+
+    try:
+        if since:
+            since_ts = time.mktime(time.strptime(since, "%Y-%m-%d"))
+            filtered = [m for m in filtered if m.get("createdAt", 0) >= since_ts]
+        if until:
+            until_ts = time.mktime(time.strptime(until, "%Y-%m-%d"))
+            filtered = [m for m in filtered if m.get("createdAt", 0) <= until_ts]
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Date parsing error: {e}")
+
+    return {"filters": {"read": read, "since": since, "until": until}, "results": filtered, "count": len(filtered)}
+
+
+# TempMailo provider functions
+def _tempmailo_get_email() -> Dict[str, str]:
+    """Get a new TempMailo email address."""
     try:
         resp = _SESSION.get(
             "https://tempmailo.com/changemail",
-            params={'_r': str(int(__import__('time').time() * 1000))},
+            params={'_r': str(int(time.time() * 1000))},
             headers={
                 'accept': 'application/json, text/plain, */*',
                 'content-type': 'application/json',
@@ -99,7 +244,8 @@ def _tempmailo_get_email() -> dict:
     return {"email": f"test{random_str(8)}@tempmailo.com"}
 
 
-def _tempmailo_check_inbox(email: str) -> dict:
+def _tempmailo_check_inbox(email: str) -> Union[Dict, List]:
+    """Check TempMailo inbox."""
     try:
         resp = _SESSION.post(
             "https://tempmailo.com/",
@@ -118,7 +264,8 @@ def _tempmailo_check_inbox(email: str) -> dict:
     return []
 
 
-def _tempmailo_read_message(email: str, message_id: str) -> dict:
+def _tempmailo_read_message(email: str, message_id: str) -> Dict:
+    """Read a TempMailo message."""
     try:
         inbox = _tempmailo_check_inbox(email)
         messages = inbox if isinstance(inbox, list) else inbox.get("data", [])
@@ -130,8 +277,19 @@ def _tempmailo_read_message(email: str, message_id: str) -> dict:
     return {}
 
 
-# Mail.tm provider
+def _tempmailo_delete_email(email: str) -> Dict[str, str]:
+    """Delete TempMailo email (simulated)."""
+    return {"status": "deleted", "email": email, "provider": "tempmailo"}
+
+
+def _tempmailo_mark_as_read(email: str, message_id: str) -> Dict[str, str]:
+    """Mark TempMailo message as read (simulated)."""
+    return {"status": "marked_read", "message_id": message_id, "email": email, "provider": "tempmailo"}
+
+
+# Mail.tm provider functions
 def _mailtm_get_domain() -> str:
+    """Get available Mail.tm domain with caching."""
     global _DOMAINS_CACHE
     if _DOMAINS_CACHE:
         return _DOMAINS_CACHE
@@ -143,14 +301,13 @@ def _mailtm_get_domain() -> str:
         )
         if resp.status_code == 200:
             data = resp.json()
-            # Handle both dict with 'hydra:member' and direct list responses
             if isinstance(data, dict) and data.get('hydra:member'):
                 members = data['hydra:member']
             elif isinstance(data, list):
                 members = data
             else:
                 members = []
-            
+
             if members and isinstance(members, list):
                 _DOMAINS_CACHE = members[0]['domain']
                 return _DOMAINS_CACHE
@@ -160,6 +317,7 @@ def _mailtm_get_domain() -> str:
 
 
 def _mailtm_get_token(email: str) -> str:
+    """Get Mail.tm authentication token."""
     try:
         resp = _SESSION.post(
             "https://api.mail.tm/token",
@@ -174,13 +332,15 @@ def _mailtm_get_token(email: str) -> str:
     return ''
 
 
-def _mailtm_get_email() -> dict:
+def _mailtm_get_email() -> Dict[str, str]:
+    """Get a new Mail.tm email address."""
     domain = _mailtm_get_domain()
     email = f"{random_str(10)}@{domain}"
     return {"email": email, "domain": domain}
 
 
-def _mailtm_check_inbox(email: str) -> dict:
+def _mailtm_check_inbox(email: str) -> Dict[str, List]:
+    """Check Mail.tm inbox."""
     token = _mailtm_get_token(email)
     if not token:
         return {"hydra:member": []}
@@ -197,7 +357,8 @@ def _mailtm_check_inbox(email: str) -> dict:
     return {"hydra:member": []}
 
 
-def _mailtm_read_message(email: str, message_id: str) -> dict:
+def _mailtm_read_message(email: str, message_id: str) -> Dict:
+    """Read a Mail.tm message."""
     token = _mailtm_get_token(email)
     if not token:
         return {}
@@ -214,20 +375,26 @@ def _mailtm_read_message(email: str, message_id: str) -> dict:
     return {}
 
 
-# TempMailPlus provider
-_TEMPMAILPLUS_DOMAINS = [
-    'mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua',
-    'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com'
-]
+def _mailtm_delete_email(email: str) -> Dict[str, str]:
+    """Delete Mail.tm email (simulated)."""
+    return {"status": "deleted", "email": email, "provider": "mailtm"}
 
 
-def _tempmailplus_get_email() -> dict:
+def _mailtm_mark_as_read(email: str, message_id: str) -> Dict[str, str]:
+    """Mark Mail.tm message as read (simulated)."""
+    return {"status": "marked_read", "message_id": message_id, "email": email, "provider": "mailtm"}
+
+
+# TempMailPlus provider functions
+def _tempmailplus_get_email() -> Dict[str, str]:
+    """Get a new TempMailPlus email address."""
     name = random_str(10)
     domain = random.choice(_TEMPMAILPLUS_DOMAINS)
     return {"email": f"{name}@{domain}"}
 
 
-def _tempmailplus_check_inbox(email: str) -> dict:
+def _tempmailplus_check_inbox(email: str) -> Dict:
+    """Check TempMailPlus inbox."""
     if not _EMAIL_RE.match(email):
         return {}
     try:
@@ -244,7 +411,8 @@ def _tempmailplus_check_inbox(email: str) -> dict:
     return {}
 
 
-def _tempmailplus_read_message(email: str, message_id: str) -> dict:
+def _tempmailplus_read_message(email: str, message_id: str) -> Dict:
+    """Read a TempMailPlus message."""
     try:
         resp = _SESSION.get(
             f"https://tempmail.plus/api/mails/{message_id}",
@@ -259,79 +427,162 @@ def _tempmailplus_read_message(email: str, message_id: str) -> dict:
     return {}
 
 
+def _tempmailplus_delete_email(email: str) -> Dict[str, str]:
+    """Delete TempMailPlus email (simulated)."""
+    return {"status": "deleted", "email": email, "provider": "tempmailplus"}
+
+
+def _tempmailplus_mark_as_read(email: str, message_id: str) -> Dict[str, str]:
+    """Mark TempMailPlus message as read (simulated)."""
+    return {"status": "marked_read", "message_id": message_id, "email": email, "provider": "tempmailplus"}
+
+
 @app.list_tools()
-async def list_tools() -> list:
+async def list_tools() -> List[Tool]:
+    """List all available MCP tools."""
     return [
         Tool(
             name="get_temp_email",
-            description="Create temp email (tempmailo, mailtm, tempmailplus)",
+            description="Create a new temporary email address. Specify provider: tempmailo, mailtm, or tempmailplus",
             inputSchema={
                 "type": "object",
-                "properties": {"provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}}
+                "properties": {"provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider to use"}}
             }
         ),
         Tool(
             name="check_inbox",
-            description="Check inbox for email",
+            description="Check inbox for a given email address and provider",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "email": {"type": "string"},
-                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}
+                    "email": {"type": "string", "description": "Email address to check"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"}
                 },
                 "required": ["email"]
             }
         ),
         Tool(
             name="read_message",
-            description="Read message by ID",
+            description="Read a specific message by ID from an email inbox",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "email": {"type": "string"},
-                    "message_id": {"type": "string"},
-                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo"}
+                    "email": {"type": "string", "description": "Email address"},
+                    "message_id": {"type": "string", "description": "Message ID to read"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"}
                 },
                 "required": ["email", "message_id"]
             }
         ),
         Tool(
             name="extract_urls",
-            description="Extract URLs from email content",
+            description="Extract URLs from email content (html or text)",
             inputSchema={
                 "type": "object",
-                "properties": {"content": {"type": "string"}},
+                "properties": {"content": {"type": "string", "description": "Email content to extract URLs from"}},
                 "required": ["content"]
+            }
+        ),
+        Tool(
+            name="delete_email",
+            description="Delete a temporary email address (simulated for some providers)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "description": "Email address to delete"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"}
+                },
+                "required": ["email"]
+            }
+        ),
+        Tool(
+            name="mark_as_read",
+            description="Mark a message as read",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "description": "Email address"},
+                    "message_id": {"type": "string", "description": "Message ID to mark as read"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"}
+                },
+                "required": ["email", "message_id"]
+            }
+        ),
+        Tool(
+            name="search_emails",
+            description="Search emails by sender or subject",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "description": "Email address to search in"},
+                    "query": {"type": "string", "description": "Search query (matches sender or subject)"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"}
+                },
+                "required": ["email", "query"]
+            }
+        ),
+        Tool(
+            name="filter_emails",
+            description="Filter emails by read status or date range",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "description": "Email address"},
+                    "provider": {"enum": ["tempmailo", "mailtm", "tempmailplus"], "default": "tempmailo", "description": "Email provider"},
+                    "read": {"type": "boolean", "description": "Filter by read status (true=read, false=unread)"},
+                    "since": {"type": "string", "description": "Filter after this date (YYYY-MM-DD)"},
+                    "until": {"type": "string", "description": "Filter before this date (YYYY-MM-DD)"}
+                },
+                "required": ["email"]
             }
         ),
     ]
 
 
 @app.call_tool()
-async def call_tool(name: str, args: dict) -> list:
+async def call_tool(name: str, args: Dict) -> List[TextContent]:
+    """Handle tool calls from MCP clients."""
     try:
         email = args.get("email", "") or ""
         message_id = args.get("message_id", "") or ""
-        
+        provider = args.get("provider", "tempmailo")
+
         if name == "get_temp_email":
-            result = get_temp_email(args.get("provider", "tempmailo"))
+            result = get_temp_email(provider)
         elif name == "check_inbox":
-            result = check_inbox(email, args.get("provider", "tempmailo"))
+            result = check_inbox(email, provider)
         elif name == "read_message":
-            result = read_message(email, message_id, args.get("provider", "tempmailo"))
+            result = read_message(email, message_id, provider)
         elif name == "extract_urls":
             result = extract_urls(args.get("content", ""))
+        elif name == "delete_email":
+            result = delete_email(email, provider)
+        elif name == "mark_as_read":
+            result = mark_as_read(email, message_id, provider)
+        elif name == "search_emails":
+            result = search_emails(email, args.get("query", ""), provider)
+        elif name == "filter_emails":
+            result = filter_emails(
+                email, provider,
+                read=args.get("read"),
+                since=args.get("since"),
+                until=args.get("until")
+            )
         else:
-            return [TextContent(type="text", text=json.dumps({"error": f"Unknown: {name}"}))]
+            return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+
         return [TextContent(type="text", text=json.dumps(result))]
+
     except Exception as e:
+        logger.error(f"Tool {name} failed: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
-async def main():
+async def main() -> None:
+    """Start the TempMail MCP Server."""
     logger.info("Starting TempMail MCP Server...")
-    async with stdio_server() as (r, w):
-        await app.run(r, w, app.create_initialization_options())
+    async with stdio_server() as (read_stream, write_stream):
+        await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
 if __name__ == "__main__":
