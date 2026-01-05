@@ -143,8 +143,16 @@ def _mailtm_get_domain() -> str:
         )
         if resp.status_code == 200:
             data = resp.json()
-            if data.get('hydra:member'):
-                _DOMAINS_CACHE = data['hydra:member'][0]['domain']
+            # Handle both dict with 'hydra:member' and direct list responses
+            if isinstance(data, dict) and data.get('hydra:member'):
+                members = data['hydra:member']
+            elif isinstance(data, list):
+                members = data
+            else:
+                members = []
+            
+            if members and isinstance(members, list):
+                _DOMAINS_CACHE = members[0]['domain']
                 return _DOMAINS_CACHE
     except Exception as e:
         logger.error(f"mailtm domain: {e}")
