@@ -11,7 +11,7 @@ Python utilities for working with temporary email services. Supports multiple pr
 | Temp-Mail.io | temp-mail.io | ✅ Working |
 | TempMail.so | tempmail.so | ✅ Working |
 | TempMail.plus | tempmail.plus | ✅ Working |
-| MCP Server | tempmail-mcp | ✅ Fast |
+| MCP Server | tempmailmcp | ✅ Fast |
 
 ## Quick Start with uv (Recommended)
 
@@ -53,9 +53,9 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "tempmail": {
+    "tempmailmcp": {
       "command": "uv",
-      "args": ["--directory", "/path/to/tempmail", "run", "python", "mcp/server.py"]
+      "args": ["--directory", "/path/to/tempmailmcp", "run", "python", "mcp/server.py"]
     }
   }
 }
@@ -177,7 +177,7 @@ cd mcp && source ../.venv/bin/activate && python test_groq_mcp.py
 ## Project Structure
 
 ```
-tempmail/
+tempmailmcp/
 ├── README.md              # This file
 ├── AGENTS.md              # Guidelines for AI agents
 ├── .gitignore             # Git ignore rules
