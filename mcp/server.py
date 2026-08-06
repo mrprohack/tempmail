@@ -22,6 +22,7 @@ import random
 import re
 import string
 import time
+from datetime import datetime
 from typing import Dict, List, Optional, Set, Union
 
 import requests
@@ -46,6 +47,30 @@ _TEMPMAILPLUS_DOMAINS: List[str] = [
     'mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua',
     'rover.info', 'chitthi.in', 'fextemp.com', 'any.pink', 'merepost.com'
 ]
+
+
+def _parse_time(s: str) -> float:
+    """Parse ISO 8601 or YYYY-MM-DD string to UTC timestamp."""
+    s = s.strip()
+    # Try ISO with 'Z' or timezone
+    if 'T' in s:
+        s = s.replace('Z', '+00:00')
+        return datetime.fromisoformat(s).timestamp()
+    # Fallback: date-only
+    return time.mktime(time.strptime(s, "%Y-%m-%d"))
+
+
+def _get_timestamp(msg: Dict) -> float:
+    """Extract createdAt timestamp (ISO string or epoch int) from message dict."""
+    created = msg.get("createdAt") or msg.get("created_at") or msg.get("id", 0)
+    if isinstance(created, (int, float)):
+        return float(created)
+    if isinstance(created, str):
+        try:
+            return _parse_time(created)
+        except (ValueError, TypeError):
+            pass
+    return 0.0
 
 
 def random_str(length: int) -> str:
@@ -210,13 +235,13 @@ def filter_emails(
 
     try:
         if since:
-            since_ts = time.mktime(time.strptime(since, "%Y-%m-%d"))
-            filtered = [m for m in filtered if m.get("createdAt", 0) >= since_ts]
+            since_ts = _parse_time(since)
+            filtered = [m for m in filtered if _get_timestamp(m) >= since_ts]
         if until:
-            until_ts = time.mktime(time.strptime(until, "%Y-%m-%d"))
-            filtered = [m for m in filtered if m.get("createdAt", 0) <= until_ts]
+            until_ts = _parse_time(until)
+            filtered = [m for m in filtered if _get_timestamp(m) <= until_ts]
     except (ValueError, TypeError) as e:
-        logger.warning(f"Date parsing error: {e}")
+        logger.warning(f"Date filtering error: {e}")
 
     return {"filters": {"read": read, "since": since, "until": until}, "results": filtered, "count": len(filtered)}
 

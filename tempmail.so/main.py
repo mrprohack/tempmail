@@ -1,6 +1,7 @@
 import requests
 import time
 import logging
+import sys
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -12,7 +13,11 @@ HEADERS = {
     'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
 }
 
-COOKIE = "tm_session=JiG4Bn%2BJEpf3rPSLQwtLPODHdtXEX1vGmipcz%2F%2Fpd%2BeCofzrWmni8uhBZ0NAKycaI%2F%2FAiNz5vg5iu0%2FQz0J02zTewSc%2BGagp5F0EosBeHAbMGfRatTgclq7gbyITECAJFCTcm2CI6C8iw0Kg%2BVBnqVXYZ13FFOPERAKpOpT2DypAKUdslmX5dTWcWE0asQEPIpoQRyXdnnc68fGsE4Uzw01bM%2BitjIo31IuhP4ONhrOCnwugirwVB6KFy%2FAAAIKilCPiNKaS00jotAd3ryN0chMuwQfKt7HF9xn%2F1QxVPxUNYNfO2LcqhxhzYSX4uLN%2BF8XW3wJ%2F9EStCniIoba%2BPoZbtLKjX0%2FPLWrb41fSskKxa%2Bp7KXBpaEQu4tks1J3t6uHuPcga05HtnKSKsMcJvJ0gcU5rY7Fo6feYi1l9QxPEvNPL%2BE5f9Ox18T4wajDS6QRwL2ReQMVMkB4nUyOJQ1DVuaGg5eMdmK2vkjDc3h%2Bv0ysnctjiIHC%2FNFbE9t%2BQ"
+# IMPORTANT: This cookie expires quickly (hours). You must obtain a fresh
+# tm_session cookie from a browser session at https://tempmail.so and
+# paste it below. The hard-coded value below is a placeholder and WILL FAIL.
+COOKIE = "tm_session=REPLACE_WITH_FRESH_COOKIE_FROM_BROWSER"
+
 
 def get_inbox():
     params = {"requestTime": str(int(time.time() * 1000)), "lang": "us"}
@@ -21,13 +26,22 @@ def get_inbox():
         resp = requests.get(BASE_URL, headers=headers, params=params, timeout=10)
         if resp.status_code == 200:
             return resp.json()
-    except Exception as e:
-        logger.error(f"Failed to get inbox: {e}")
-    return {}
+        # Surface the actual HTTP error instead of returning {} silently
+        logger.error(f"HTTP {resp.status_code}: {resp.text}")
+        raise RuntimeError(f"Inbox request failed with status {resp.status_code}")
+    except requests.RequestException as e:
+        logger.error(f"Network error getting inbox: {e}")
+        raise
+
 
 def main():
-    inbox = get_inbox()
+    try:
+        inbox = get_inbox()
+    except RuntimeError as e:
+        logger.error(f"Cannot fetch inbox: {e}")
+        sys.exit(1)
     print(f"Inbox: {inbox}")
+
 
 if __name__ == "__main__":
     main()

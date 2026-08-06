@@ -23,15 +23,23 @@ def get_domain():
         resp = requests.get(f"{BASE_URL}/domains", headers=HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            if 'hydra:member' in data and data['hydra:member']:
-                _DOMAINS_CACHE = data['hydra:member'][0]['domain']
-                return _DOMAINS_CACHE
-            elif 'data' in data and data['data']:
-                _DOMAINS_CACHE = data['data'][0]['domain']
-                return _DOMAINS_CACHE
+            # API historically returned {"hydra:member": [...]} or {"data": [...]},
+            # but now returns a bare JSON list. Handle all three shapes.
+            if isinstance(data, list):
+                members = data
+            elif isinstance(data, dict):
+                members = data.get('hydra:member') or data.get('data') or []
+            else:
+                members = []
+            for entry in members:
+                if isinstance(entry, dict) and entry.get('domain'):
+                    _DOMAINS_CACHE = entry['domain']
+                    return _DOMAINS_CACHE
     except Exception as e:
         logger.error(f"Failed to get domain: {e}")
-    return "mail.tm"
+    # Do NOT fall back to "mail.tm" - it is not a valid registration domain.
+    # Signal failure so the caller can react instead of proceeding with garbage.
+    raise RuntimeError("Could not resolve a valid mail.tm domain from the API")
 
 def random_email():
     name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
@@ -80,20 +88,30 @@ def get_message(token, message_id):
     return {}
 
 def main():
-    email, password = random_email()
+    try:
+        email, password = random_email()
+    except RuntimeError as e:
+        logger.error(f"Cannot start: {e}")
+        raise SystemExit(1)
     print(f"Email: {email}")
-    
-    if create_account(email, password):
-        print("Account created")
-    
+
+    if not create_account(email, password):
+        logger.error("Account creation failed")
+        raise SystemExit(1)
+    print("Account created")
+
     token = get_token(email, password)
-    if token:
-        print(f"Token: {token[:50]}...")
-        inbox = get_inbox(token)
-        print(f"Inbox: {inbox}")
-        if inbox.get("hydra:member"):
-            msg = get_message(token, inbox["hydra:member"][0]["id"])
-            print(f"Message: {msg}")
+    if not token:
+        logger.error("Token fetch failed")
+        raise SystemExit(1)
+    print(f"Token: {token[:50]}...")
+
+    inbox = get_inbox(token)
+    print(f"Inbox: {inbox}")
+    members = inbox.get("hydra:member") if isinstance(inbox, dict) else inbox
+    if members:
+        msg = get_message(token, members[0]["id"])
+        print(f"Message: {msg}")
 
 if __name__ == "__main__":
     main()
