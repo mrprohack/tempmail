@@ -42,6 +42,7 @@ _SESSION = requests.Session()
 _TIMEOUT = 5
 
 _DOMAINS_CACHE: Optional[str] = None
+_MAILTM_TOKENS: Dict[str, str] = {}
 
 _TEMPMAILPLUS_DOMAINS: List[str] = [
     'mailto.plus', 'fexpost.com', 'fexbox.org', 'mailbox.in.ua',
@@ -359,11 +360,13 @@ def _mailtm_get_domain() -> str:
                 return _DOMAINS_CACHE
     except Exception as e:
         logger.error(f"mailtm domain: {e}")
-    return "mail.tm"
+    raise RuntimeError("Could not resolve a valid mail.tm domain from the API")
 
 
-def _mailtm_get_token(email: str) -> str:
-    """Get Mail.tm authentication token."""
+def _mailtm_get_token(email: str, refresh: bool = False) -> str:
+    """Get Mail.tm authentication token (cached per email)."""
+    if not refresh and email in _MAILTM_TOKENS:
+        return _MAILTM_TOKENS[email]
     try:
         resp = _SESSION.post(
             "https://api.mail.tm/token",
@@ -372,22 +375,38 @@ def _mailtm_get_token(email: str) -> str:
             timeout=_TIMEOUT
         )
         if resp.status_code == 200:
-            return resp.json().get('token', '')
+            token = resp.json().get('token', '')
+            if token:
+                _MAILTM_TOKENS[email] = token
+                return token
     except Exception as e:
         logger.error(f"mailtm token: {e}")
     return ''
 
 
 def _mailtm_get_email() -> Dict[str, str]:
-    """Get a new Mail.tm email address."""
+    """Create a new Mail.tm account and return its email address."""
     domain = _mailtm_get_domain()
     email = f"{random_str(10)}@{domain}"
+    try:
+        resp = _SESSION.post(
+            "https://api.mail.tm/accounts",
+            json={"address": email, "password": "password123"},
+            headers={'accept': 'application/json', 'content-type': 'application/json'},
+            timeout=_TIMEOUT
+        )
+        if resp.status_code == 201:
+            _mailtm_get_token(email)
+            return {"email": email, "domain": domain}
+        logger.error(f"mailtm account create: HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.error(f"mailtm account: {e}")
     return {"email": email, "domain": domain}
 
 
-def _mailtm_check_inbox(email: str) -> Dict[str, List]:
+def _mailtm_check_inbox(email: str, refresh: bool = False) -> Dict[str, List]:
     """Check Mail.tm inbox."""
-    token = _mailtm_get_token(email)
+    token = _mailtm_get_token(email, refresh=refresh)
     if not token:
         return {"hydra:member": []}
     try:
@@ -398,14 +417,17 @@ def _mailtm_check_inbox(email: str) -> Dict[str, List]:
         )
         if resp.status_code == 200:
             return resp.json()
+        if resp.status_code == 401 and not refresh:
+            _MAILTM_TOKENS.pop(email, None)
+            return _mailtm_check_inbox(email, refresh=True)
     except Exception as e:
         logger.error(f"mailtm inbox: {e}")
     return {"hydra:member": []}
 
 
-def _mailtm_read_message(email: str, message_id: str) -> Dict:
+def _mailtm_read_message(email: str, message_id: str, refresh: bool = False) -> Dict:
     """Read a Mail.tm message."""
-    token = _mailtm_get_token(email)
+    token = _mailtm_get_token(email, refresh=refresh)
     if not token:
         return {}
     try:
@@ -416,6 +438,9 @@ def _mailtm_read_message(email: str, message_id: str) -> Dict:
         )
         if resp.status_code == 200:
             return resp.json()
+        if resp.status_code == 401 and not refresh:
+            _MAILTM_TOKENS.pop(email, None)
+            return _mailtm_read_message(email, message_id, refresh=True)
     except Exception as e:
         logger.error(f"mailtm read: {e}")
     return {}
@@ -594,11 +619,11 @@ async def call_tool(name: str, args: Dict) -> List[TextContent]:
         provider = args.get("provider", "tempmailo")
 
         if name == "get_temp_email":
-            result = get_temp_email(provider)
+            result = await asyncio.to_thread(get_temp_email, provider)
         elif name == "check_inbox":
-            result = check_inbox(email, provider)
+            result = await asyncio.to_thread(check_inbox, email, provider)
         elif name == "read_message":
-            result = read_message(email, message_id, provider)
+            result = await asyncio.to_thread(read_message, email, message_id, provider)
         elif name == "extract_urls":
             result = extract_urls(args.get("content", ""))
         elif name == "delete_email":
@@ -606,9 +631,10 @@ async def call_tool(name: str, args: Dict) -> List[TextContent]:
         elif name == "mark_as_read":
             result = mark_as_read(email, message_id, provider)
         elif name == "search_emails":
-            result = search_emails(email, args.get("query", ""), provider)
+            result = await asyncio.to_thread(search_emails, email, args.get("query", ""), provider)
         elif name == "filter_emails":
-            result = filter_emails(
+            result = await asyncio.to_thread(
+                filter_emails,
                 email, provider,
                 read=args.get("read"),
                 since=args.get("since"),
