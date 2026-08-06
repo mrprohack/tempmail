@@ -247,23 +247,44 @@ def filter_emails(
 
 
 # TempMailo provider functions
+_TEMPMAILO_TOKEN: Optional[str] = None
+_TEMPMAILO_HEADERS = {
+    'accept': 'application/json, text/plain, */*',
+    'content-type': 'application/json',
+    'origin': 'https://tempmailo.com',
+    'referer': 'https://tempmailo.com/',
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+    'x-requested-with': 'XMLHttpRequest',
+}
+
+
+def _tempmailo_token() -> Optional[str]:
+    """Get the ASP.NET antiforgery token from the tempmailo.com homepage (cached)."""
+    global _TEMPMAILO_TOKEN
+    if _TEMPMAILO_TOKEN:
+        return _TEMPMAILO_TOKEN
+    resp = _SESSION.get("https://tempmailo.com/", headers=_TEMPMAILO_HEADERS, timeout=_TIMEOUT)
+    match = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', resp.text)
+    if match:
+        _TEMPMAILO_TOKEN = match.group(1)
+    return _TEMPMAILO_TOKEN
+
+
 def _tempmailo_get_email() -> Dict[str, str]:
     """Get a new TempMailo email address."""
+    token = _tempmailo_token()
+    if not token:
+        logger.error("tempmailo: no verification token")
+        return {"email": f"test{random_str(8)}@tempmailo.com"}
     try:
         resp = _SESSION.get(
             "https://tempmailo.com/changemail",
             params={'_r': str(int(time.time() * 1000))},
-            headers={
-                'accept': 'application/json, text/plain, */*',
-                'content-type': 'application/json',
-                'origin': 'https://tempmailo.com',
-                'referer': 'https://tempmailo.com/',
-                'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            },
+            headers={**_TEMPMAILO_HEADERS, 'RequestVerificationToken': token},
             timeout=_TIMEOUT
         )
-        if resp.status_code == 200:
-            return resp.json()
+        if resp.status_code == 200 and resp.text.strip():
+            return {"email": resp.text.strip()}
     except Exception as e:
         logger.error(f"tempmailo: {e}")
     return {"email": f"test{random_str(8)}@tempmailo.com"}
@@ -271,15 +292,15 @@ def _tempmailo_get_email() -> Dict[str, str]:
 
 def _tempmailo_check_inbox(email: str) -> Union[Dict, List]:
     """Check TempMailo inbox."""
+    token = _tempmailo_token()
+    if not token:
+        logger.error("tempmailo inbox: no verification token")
+        return []
     try:
         resp = _SESSION.post(
             "https://tempmailo.com/",
             json={"mail": email},
-            headers={
-                'accept': 'application/json',
-                'content-type': 'application/json',
-                'user-agent': 'Mozilla/5.0',
-            },
+            headers={**_TEMPMAILO_HEADERS, 'RequestVerificationToken': token},
             timeout=_TIMEOUT
         )
         if resp.status_code == 200:

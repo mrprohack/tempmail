@@ -1,9 +1,7 @@
-import requests
+import re
 import time
-import logging
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import requests
 
 BASE_URL = "https://tempmailo.com"
 HEADERS = {
@@ -16,43 +14,43 @@ HEADERS = {
     'x-requested-with': 'XMLHttpRequest'
 }
 
-def get_new_email(session=None):
-    session = session or requests.Session()
-    try:
-        url = f"{BASE_URL}/changemail"
-        params = {'_r': str(time.time()).replace('.', '')[:16]}
-        response = session.get(url, headers=HEADERS, params=params, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return {"email": f"test{random_str(8)}@tempmailo.com"}
-    except Exception as e:
-        logger.error(f"Failed to get email: {e}")
-        return {"email": f"test{random_str(8)}@tempmailo.com"}
+_session = requests.Session()
+_token_cache = None
 
-def read_email(email_address, session=None):
-    session = session or requests.Session()
-    try:
-        url = f"{BASE_URL}/"
-        response = session.post(url, headers=HEADERS, json={"mail": email_address}, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return []
-    except Exception as e:
-        logger.error(f"Failed to read email: {e}")
-        return []
 
-def random_str(length):
-    import random
-    import string
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+def _get_verification_token():
+    """Fetch the ASP.NET antiforgery token from the homepage (cached)."""
+    global _token_cache
+    if _token_cache:
+        return _token_cache
+    html = _session.get(BASE_URL + '/', headers=HEADERS, timeout=10).text
+    match = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', html)
+    if not match:
+        raise RuntimeError("Could not extract RequestVerificationToken from tempmailo.com")
+    _token_cache = match.group(1)
+    return _token_cache
 
-def main():
-    session = requests.Session()
-    email = get_new_email(session)
-    print(f"Email: {email}")
-    time.sleep(2)
-    messages = read_email(email.get("email"), session)
-    print(f"Messages: {messages}")
+
+def get_new_email():
+    """Get a fresh temp email address from tempmailo.com."""
+    headers = {**HEADERS, 'RequestVerificationToken': _get_verification_token()}
+    params = {'_r': str(time.time()).replace('.', '')[:16]}
+    response = _session.get(f"{BASE_URL}/changemail", headers=headers, params=params, timeout=10)
+    response.raise_for_status()
+    return {"email": response.text.strip()}
+
+
+def read_email(email_address):
+    """Check the inbox for a tempmailo.com address."""
+    headers = {**HEADERS, 'RequestVerificationToken': _get_verification_token()}
+    response = _session.post(BASE_URL + '/', headers=headers, json={"mail": email_address}, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
 
 if __name__ == "__main__":
-    main()
+    email = get_new_email()
+    print(f"Email: {email}")
+    time.sleep(2)
+    messages = read_email(email.get("email"))
+    print(f"Messages: {messages}")

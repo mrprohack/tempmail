@@ -21,7 +21,6 @@ cd mcp && cp .env.example .env
 python tempmailo.com/main.py
 python mail.tm/main.py
 python temp-mail.io/main.py
-python tempmail.so/main.py
 python tempmail.plus/main.py
 
 # MCP server (stdio transport)
@@ -168,8 +167,6 @@ tempmail/
 ├── mail.tm/               # Mail.tm service
 │   └── main.py
 ├── temp-mail.io/          # Temp-Mail.io service
-│   └── main.py
-├── tempmail.so/           # TempMail.so service
 │   └── main.py
 ├── tempmail.plus/         # TempMail.plus service
 │   └── main.py

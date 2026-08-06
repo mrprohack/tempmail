@@ -9,7 +9,6 @@ Python utilities for working with temporary email services. Supports multiple pr
 | TempMailo | tempmailo.com | ✅ Working |
 | Mail.tm | mail.tm | ✅ Working |
 | Temp-Mail.io | temp-mail.io | ✅ Working |
-| TempMail.so | tempmail.so | ✅ Working |
 | TempMail.plus | tempmail.plus | ✅ Working |
 | MCP Server | tempmailmcp | ✅ Fast |
 
@@ -136,7 +135,6 @@ Required packages:
 python tempmailo.com/main.py
 python mail.tm/main.py
 python temp-mail.io/main.py
-python tempmail.so/main.py
 python tempmail.plus/main.py
 ```
 
@@ -190,8 +188,6 @@ tempmailmcp/
 │   └── main.py           # Mail.tm service
 ├── temp-mail.io/
 │   └── main.py           # Temp-Mail.io service
-├── tempmail.so/
-│   └── main.py           # TempMail.so service
 ├── tempmail.plus/
 │   └── main.py           # TempMail.plus service
 └── mcp/
